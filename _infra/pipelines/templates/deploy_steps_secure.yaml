@@ -1,0 +1,191 @@
+parameters:
+  subscription: ''
+  region: ''
+  regionCode: ''
+  environment: ''
+  resourceGroup: ''
+  appinsightsKeySecretName: '$(AppInsightsKeySecretName)'
+  storageConnectionStringSecretName: '$(StorageConnectionStringSecretName)'
+  aadAuthClientIdSecretName: '$(AadAuthClientIdSecretName)'
+  aadAuthClientSecretSecretName: '$(AadAuthClientSecretSecretName)'
+  workload: '$(Workload)'
+
+steps:
+- task: DownloadPipelineArtifact@2
+  displayName: 'Download ARM Artifacts'
+  inputs:
+    artifactName: arm
+    downloadPath: '$(System.ArtifactsDirectory)/arm'
+- task: DownloadBuildArtifacts@0
+  displayName: 'Download Build Package'
+  inputs:
+    buildType: current
+    buildVersionToDownload: latest
+    downloadType: single
+    artifactName: build
+    downloadPath: '$(System.ArtifactsDirectory)/build'
+- task: AzureResourceGroupDeployment@2
+  displayName: 'Deploy Application Insights'
+  inputs:
+    azureSubscription: ${{ parameters.subscription }}
+    action: 'Create Or Update Resource Group'
+    resourceGroupName: ${{ parameters.resourceGroup }}
+    location: ${{ parameters.region }})
+    templateLocation: 'Linked artifact'
+    csmFile: '$(System.ArtifactsDirectory)/arm/appinsights.json'
+    overrideParameters: '-environment ${{ parameters.environment }} -workload $(workload) -resourceLocation ${{ parameters.region }} -location ${{ parameters.regionCode }}'
+    deploymentMode: 'Incremental'
+    deploymentOutputs: appInsightsOutputs
+- task: AzureResourceGroupDeployment@2
+  displayName: 'Deploy KeyVault'
+  inputs:
+    azureSubscription: ${{ parameters.subscription }}
+    action: 'Create Or Update Resource Group'
+    resourceGroupName: ${{ parameters.resourceGroup }}
+    location: ${{ parameters.region }}
+    templateLocation: 'Linked artifact'
+    csmFile: '$(System.ArtifactsDirectory)/arm/keyvault.json'
+    overrideParameters: '-environment ${{ parameters.environment }} -workload ${{ parameters.workload }} -appInsights $(appInsightsOutputs)'
+    deploymentMode: 'Incremental'
+    deploymentOutputs: keyVaultOutputs
+- task: AzureResourceGroupDeployment@2
+  displayName: 'Deploy App Service Plan'
+  inputs:
+    azureSubscription: ${{ parameters.subscription }}
+    action: 'Create Or Update Resource Group'
+    resourceGroupName: ${{ parameters.resourceGroup }}
+    location: ${{ parameters.region }}
+    templateLocation: 'Linked artifact'
+    csmFile: '$(System.ArtifactsDirectory)/arm/appservice-consumption.json'
+    overrideParameters: '-environment ${{ parameters.environment }} -workload ${{ parameters.workload }} -location ${{ parameters.regionCode }} -skuName Y1 -skuTier Dynamic'
+    deploymentMode: 'Incremental'
+    deploymentOutputs: appPlanOutputs
+- task: AzureResourceGroupDeployment@2
+  displayName: 'Deploy Storage Account'
+  inputs:
+    azureSubscription: ${{ parameters.subscription }}
+    action: 'Create Or Update Resource Group'
+    resourceGroupName: ${{ parameters.resourceGroup }}
+    location: ${{ parameters.region}}
+    templateLocation: 'Linked artifact'
+    csmFile: '$(System.ArtifactsDirectory)/arm/storage.json'
+    overrideParameters: '-environment ${{ parameters.environment }} -location ${{ parameters.regionCode }}'
+    deploymentMode: 'Incremental'
+    deploymentOutputs: storageOutputs
+- pwsh: '$mapToSet =@{ 
+          "armKeyVault_" = ConvertFrom-Json $($env:KeyVaultDeploymentOutputs);
+          "armAppService_" = ConvertFrom-Json $($env:AppServiceDeploymentOutputs);
+          "armStorage_" = ConvertFrom-Json $($env:StorageDeploymentOutputs);}
+
+          $mapToSet.GetEnumerator() | ForEach-Object { foreach ($output in $_.Value.PSObject.Properties) {
+            $var = "$($_.Key)" + $($output.Name)
+
+            Write-Host "##vso[task.setvariable variable=$($var)]$($output.Value.value)"}}'
+  displayName: 'Parse ARM Outputs'
+  env:
+    KeyVaultDeploymentOutputs: $(keyVaultOutputs)
+    AppServiceDeploymentOutputs: $(appPlanOutputs)
+    StorageDeploymentOutputs: $(storageOutputs)
+- task: AzureCLI@2
+  displayName: 'Set Access Policy For SPN'
+  inputs:
+    azureSubscription: ${{ parameters.subscription }}
+    scriptType: bash
+    failOnStandardError: true
+    addSpnToEnvironment: true
+    scriptLocation: inlineScript
+    inlineScript: az keyvault set-policy --name $(armKeyVault_ResourceName) --spn $servicePrincipalId --secret-permissions get set list
+- task: AzureResourceGroupDeployment@2
+  displayName: 'Deploy Function App Site'
+  inputs:
+    azureSubscription: ${{ parameters.subscription }}
+    action: 'Create Or Update Resource Group'
+    resourceGroupName: ${{ parameters.resourceGroup }}
+    location: ${{ parameters.region}}
+    templateLocation: 'Linked artifact'
+    csmFile: '$(System.ArtifactsDirectory)/arm/function-site.json'
+    overrideParameters: '-environment ${{ parameters.environment }} -location ${{ parameters.regionCode }} -hostingPlanResourceId $(armAppService_resourceId)'
+    deploymentMode: 'Incremental'
+    deploymentOutputs: funcAppOutputs
+- pwsh: '$mapToSet =@{ 
+          "funcapp_" = ConvertFrom-Json $($env:FuncAppDeploymentOutputs)};
+
+          $mapToSet.GetEnumerator() | ForEach-Object { foreach ($output in $_.Value.PSObject.Properties) {
+            $var = "$($_.Key)" + $($output.Name)
+
+            Write-Host "##vso[task.setvariable variable=$($var)]$($output.Value.value)"}}'
+  displayName: 'Parse ARM Outputs'
+  env:
+    FuncAppDeploymentOutputs: $(funcAppOutputs)
+- task: AzureCLI@2
+  displayName: 'Set Access Policy for Function in KeyVault'
+  inputs:
+    azureSubscription: ${{ parameters.subscription }}
+    scriptType: bash
+    failOnStandardError: true
+    scriptLocation: inlineScript
+    inlineScript: az keyvault set-policy --name $(armKeyVault_ResourceName) --object-id $(funcapp_principalId) --secret-permissions get
+- task: AzurePowerShell@4
+  displayName: 'Store Storage Account Connection String to KeyVault'
+  inputs:
+    azureSubscription: ${{ parameters.subscription }}
+    azurePowerShellVersion: LatestVersion
+    scriptType: inlineScript
+    inline: |
+        $saKey=(Get-AzStorageAccountKey -ResourceGroupName ${{ parameters.resourceGroup }} -Name $(armStorage_resourceName))[0].Value
+        $connString = "DefaultEndpointsProtocol=https;AccountName=" + "$(armStorage_resourceName)" + ";AccountKey=" + "$saKey" + ";EndpointSuffix=core.windows.net"
+        $secret = ConvertTo-SecureString -String $connString -AsPlainText -Force
+        Set-AzKeyVaultSecret -VaultName $(armKeyVault_ResourceName) -Name ${{ parameters.storageConnectionStringSecretName }} -SecretValue $secret
+        Write-Host "##vso[task.setvariable variable=storageAccountConnectionString;issecret=true]$($connString)"
+- task: AzureCLI@2
+  displayName: 'Create ConfigurationTable'
+  inputs:
+    azureSubscription: ${{ parameters.subscription }}
+    scriptType: bash
+    failOnStandardError: true
+    scriptLocation: inlineScript
+    inlineScript: |
+        connString=$(az keyvault secret show --vault-name $(armKeyVault_ResourceName) --name ${{ parameters.storageConnectionStringSecretName }} --query value -o tsv)
+        az storage table create --name "ConfigurationTable" --connection-string "$connString"
+        az storage table create --name "ConfigurationTable" --connection-string "$(storageAccountConnectionString)"
+- task: AzureCLI@2
+  displayName: 'Get KeyVault Secret URIs'
+  inputs:
+    azureSubscription: ${{ parameters.subscription }}
+    scriptType: bash
+    failOnStandardError: true
+    scriptLocation: inlineScript
+    inlineScript: |
+      declare -a snames=(
+                        "${{ parameters.storageConnectionStringSecretName }}" \
+                        "${{ parameters.aadAuthClientIdSecretName }}" \
+                        "${{ parameters.aadAuthClientSecretSecretName }}" \
+                        "${{ parameters.appinsightsKeySecretName }}")
+      declare -a outVars=(
+                        "storage_ConnStringUri" \
+                        "aad_ClientIdUri" \
+                        "aad_ClientSecretUri" \
+                        "appInsights_KeyUri")
+      x=0
+      while [ $x -lt ${#snames[@]} ]
+      do
+        uri=$(az keyvault secret show --vault-name $(armKeyVault_ResourceName) --name ${snames[$x]} --query id --output tsv)
+        echo "##vso[task.setvariable variable=${outVars[$x]};]@Microsoft.KeyVault(SecretUri=$uri)"
+        (( x++ ))
+      done
+- task: AzureFunctionApp@1
+  displayName: 'Azure Function App Deploy'
+  inputs:
+    azureSubscription: ${{ parameters.subscription }}
+    appType: functionApp
+    appName: $(funcapp_resourceName)
+    package: $(System.ArtifactsDirectory)/build/**/*.zip
+    appSettings: '
+    -AzureWebJobsStorage $(storage_ConnStringUri)
+    -FUNCTIONS_WORKER_RUNTIME dotnet
+    -FUNCTIONS_EXTENSION_VERSION ~2
+    -APPINSIGHTS_INSTRUMENTATIONKEY $(appInsights_KeyUri)
+    -secretsdemo:storageconnstring $(storage_ConnStringUri)
+    -secretsdemo:aadclientid $(aad_ClientIdUri)
+    -secretsdemo:aadclientsecret $(aad_ClientSecretUri)
+    '

@@ -1,0 +1,88 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "tags": {
+      "type": "object",
+      "metadata": {
+        "description": "Override or add additional tags than the defaults"
+      },
+      "defaultValue": {
+      }
+    },
+    "environment": {
+      "type": "string",
+      "metadata": {
+        "description": "Environment the resource is deployed to"
+      }
+    },
+    "location": {
+      "type": "string",
+      "metadata": {
+        "description": "Location the resource is deployed to"
+      },
+      "allowedValues": [
+        "mel",
+        "syd"
+      ]
+    },
+    "skuName": {
+      "type": "string",
+      "metadata": {
+        "description": "SKU type to apply to the resource."
+      },
+      "allowedValues": [
+        "Y1"
+      ]
+    },
+    "skuTier": {
+      "type": "string",
+      "metadata": {
+        "description": "SKU type to apply to the resource."
+      },
+      "allowedValues": [
+        "Dynamic"
+      ]
+    },
+    "workload": {
+      "type": "string",
+      "metadata": {
+        "description": "Workload the resources relates to"
+      }
+    }
+  },
+  "variables": {
+    "tags": {
+      "environment": "[parameters('environment')]",
+      "organisation": "nicolio",
+      "platform": "demo"
+    },
+    "resourceName": "[concat(parameters('workload'),'-','demo','-',parameters('environment'),'-','nicolio','-',substring(uniqueString(concat(subscription().subscriptionId,resourceGroup().name)),0,6),'','-',parameters('location'),'-','asp')]"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Web/serverfarms",
+      "kind": "linux",
+      "apiVersion": "2018-02-01",
+      "name": "[variables('resourceName')]",
+      "location": "[resourceGroup().location]",
+      "properties": {
+        "name": "[concat(parameters('workload'),'-','demo','-',parameters('environment'),'-','nicolio','-',substring(uniqueString(concat(subscription().subscriptionId,resourceGroup().name)),0,6),'','-',parameters('location'),'-','asp')]"
+      },
+      "sku": {
+        "name": "[parameters('skuName')]",
+        "tier": "[parameters('skuTier')]"
+      }
+    }
+  ],
+  "outputs": {
+    "resourceName": {
+      "type": "string",
+      "value": "[concat(parameters('workload'),'-','demo','-',parameters('environment'),'-','nicolio','-',substring(uniqueString(concat(subscription().subscriptionId,resourceGroup().name)),0,6),'','-',parameters('location'),'-','asp')]"
+    },
+    "resourceId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.Web/serverfarms',variables('resourceName'))]"
+    }
+  }
+}

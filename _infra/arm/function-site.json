@@ -1,0 +1,86 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "tags": {
+      "type": "object",
+      "metadata": {
+        "description": "Override or add additional tags than the defaults"
+      },
+      "defaultValue": {}
+    },
+    "environment": {
+      "type": "string",
+      "metadata": {
+        "description": "Environment the resource belongs to"
+      }
+    },
+    "hostingPlanResourceId": {
+      "type": "string",
+      "metadata": {
+        "description": "Resource ID of the hosting plan to deploy into."
+      }
+    },
+    "location": {
+      "type": "string",
+      "metadata": {
+        "description": "Location the resource is deployed to"
+      },
+      "allowedValues": [
+        "mel",
+        "syd"
+      ]
+    }
+  },
+  "variables": {
+    "tags": {
+      "environment": "[parameters('environment')]",
+      "organisation": "nicolio",
+      "department": "demo",
+      "platform": "demo"
+    },
+    "resourceName": "[concat('sec','-','demo','-',parameters('environment'),'-','nicolio','-',substring(uniqueString(concat(subscription().subscriptionId,resourceGroup().name)),0,6),'','-',parameters('location'),'-','funcapp')]"
+  },
+  "resources": [
+    {
+      "apiVersion": "2015-08-01",
+      "type": "Microsoft.Web/sites",
+      "name": "[variables('resourceName')]",
+      "location": "[resourceGroup().location]",
+      "tags": "[union(variables('tags'),parameters('tags'))]",
+      "kind": "functionapp",
+      "identity": {
+        "type": "SystemAssigned"
+      },
+      "properties": {
+        "serverFarmId": "[parameters('hostingPlanResourceId')]"
+      }
+    },
+    {
+      "type": "Microsoft.Web/sites/config",
+      "apiVersion": "2018-11-01",
+      "name": "[concat(variables('resourceName'), '/web')]",
+      "location": "[resourceGroup().location]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Web/sites', variables('resourceName'))]"
+      ],
+      "tags": "[union(variables('tags'),parameters('tags'))]",
+      "properties": {
+      }
+    }
+  ],
+  "outputs": {
+    "resourceName": {
+      "type": "string",
+      "value": "[variables('resourceName')]"
+    },
+    "resourceId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.Web/sites',variables('resourceName'))]"
+    },
+    "principalId": {
+      "type": "string",
+      "value": "[reference(concat(resourceId('Microsoft.Web/sites/', variables('resourceName')), '/providers/Microsoft.ManagedIdentity/Identities/default'), '2015-08-31-PREVIEW').principalId]"
+    }
+  }
+}

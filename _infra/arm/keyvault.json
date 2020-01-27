@@ -1,0 +1,87 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "tags": {
+      "type": "object",
+      "metadata": {
+        "description": "Override or add additional tags than the defaults"
+      },
+      "defaultValue": {
+      }
+    },
+    "environment": {
+      "type": "string",
+      "metadata": {
+        "description": "Environment the Vault belongs to"
+      }
+    },
+    "workload": {
+      "type": "string",
+      "metadata": {
+        "description": "Purpose of the KeyVault"
+      }
+    },
+    "appInsights": {
+      "type": "object",
+      "metadata": {
+        "description": "Details of the solution application insights instance"
+      }
+    },
+    "accessPolicies": {
+      "defaultValue": [
+      ],
+      "type": "array"
+    }
+  },
+  "variables": {
+    "tags": {
+      "environment": "[parameters('environment')]",
+      "organisation": "nicolio",
+      "department": "demo",
+      "platform": "demo"
+    },
+    "resourceName": "[concat(parameters('workload'),'demo',parameters('environment'),substring(uniqueString(concat(subscription().subscriptionId,resourceGroup().name)),0,6),'','kv')]"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.KeyVault/vaults",
+      "name": "[variables('resourceName')]",
+      "apiVersion": "2018-02-14",
+      "location": "[resourceGroup().location]",
+      "tags": "[union(variables('tags'),parameters('tags'))]",
+      "properties": {
+        "enabledForDeployment": "false",
+        "enabledForDiskEncryption": "false",
+        "enabledForTemplateDeployment": "false",
+        "tenantId": "[subscription().tenantId]",
+        "accessPolicies": "[parameters('accessPolicies')]",
+        "sku": {
+          "name": "standard",
+          "family": "A"
+        }
+      }
+    },
+   {
+      "type": "Microsoft.KeyVault/vaults/secrets",
+      "name": "[concat(variables('resourceName'), '/secretsdemo--appinsightskey')]",
+      "apiVersion": "2018-02-14",
+      "dependsOn": [
+        "[concat('Microsoft.KeyVault/vaults/', variables('resourceName'))]"
+      ],
+      "properties": {
+        "value": "[reference(resourceId('Microsoft.Insights/components', parameters('appInsights').resourceName.value), '2015-05-01').InstrumentationKey]"
+      }
+    }
+  ],
+  "outputs": {
+    "resourceName": {
+      "type": "string",
+      "value": "[variables('resourceName')]"
+    },
+    "resourceId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.KeyVault/vaults',variables('resourceName'))]"
+    }
+  }
+}

@@ -1,0 +1,76 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "tags": {
+      "type": "object",
+      "metadata": {
+        "description": "Override or add additional tags than the defaults"
+      },
+      "defaultValue": {
+      }
+    },
+    "environment": {
+      "type": "string",
+      "metadata": {
+        "description": "Environment the resource belongs to"
+      }
+    },
+    "location": {
+      "type": "string",
+      "metadata": {
+        "description": "Location code for the resource, to identify where the resource resides"
+      },
+      "allowedValues": [
+        "mel",
+        "syd"
+      ]
+    }
+  },
+  "variables": {
+    "tags": {
+      "environment": "[parameters('environment')]",
+      "organisation": "nicolio",
+      "platform": "demo"
+    },
+    "resourceName": "[concat('secdemo',parameters('environment'),substring(uniqueString(concat(subscription().subscriptionId,resourceGroup().name)),0,6),'',parameters('location'),'st')]"
+  },
+  "resources": [
+    {
+      "name": "[variables('resourceName')]",
+      "type": "Microsoft.Storage/storageAccounts",
+      "apiVersion": "2018-07-01",
+      "location": "[resourceGroup().location]",
+      "tags": "[union(variables('tags'),parameters('tags'))]",
+      "kind": "StorageV2",
+      "sku": {
+        "name": "Standard_GRS",
+        "tier": "Standard"
+      },
+      "properties": {
+        "accessTier": "Hot"
+      },
+      "resources": [
+        {
+          "name": "default/data",
+          "type": "blobServices/containers",
+          "apiVersion": "2018-07-01",
+          "tags": "[union(variables('tags'),parameters('tags'))]",
+          "dependsOn": [
+            "[variables('resourceName')]"
+          ]
+        }
+      ]
+    }
+  ],
+  "outputs": {
+    "resourceName": {
+      "type": "string",
+      "value": "[variables('resourceName')]"
+    },
+    "resourceId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.Storage/storageAccounts',variables('resourceName'))]"
+    }
+  }
+}
